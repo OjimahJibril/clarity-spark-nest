@@ -3,11 +3,13 @@
 ;; Constants
 (define-constant contract-owner tx-sender)
 (define-constant err-not-authorized (err u100))
-(define-constant err-invalid-user (err u101))
+(define-constant err-invalid-user (err u101)) 
 (define-constant err-already-registered (err u102))
 (define-constant err-insufficient-funds (err u103))
+(define-constant err-milestone-not-found (err u104))
+(define-constant err-milestone-not-completed (err u105))
 
-;; Data Variables 
+;; Data Variables
 (define-map Startups
     principal
     {
@@ -15,7 +17,18 @@
         description: (string-ascii 500),
         funding-goal: uint,
         funds-raised: uint,
-        verified: bool
+        verified: bool,
+        milestone-count: uint
+    }
+)
+
+(define-map Milestones
+    { startup: principal, milestone-id: uint }
+    {
+        description: (string-ascii 200),
+        funds-required: uint,
+        completed: bool,
+        approved: bool
     }
 )
 
@@ -44,13 +57,14 @@
     {
         amount: uint,
         timestamp: uint,
-        active: bool
+        active: bool,
+        released-funds: uint
     }
 )
 
 ;; Public Functions
 
-;; Register a new startup
+;; Register a new startup with milestones
 (define-public (register-startup (name (string-ascii 50)) (description (string-ascii 500)) (funding-goal uint))
     (let ((existing-startup (get-startup tx-sender)))
         (if (is-some existing-startup)
@@ -61,10 +75,89 @@
                     description: description,
                     funding-goal: funding-goal,
                     funds-raised: u0,
-                    verified: false
+                    verified: false,
+                    milestone-count: u0
                 })
                 (ok true)
             )
+        )
+    )
+)
+
+;; Add milestone for startup
+(define-public (add-milestone (description (string-ascii 200)) (funds-required uint))
+    (let (
+        (startup-data (get-startup tx-sender))
+    )
+        (match startup-data
+            startup-info
+            (begin
+                (map-set Milestones 
+                    { 
+                        startup: tx-sender,
+                        milestone-id: (+ (get milestone-count startup-info) u1)
+                    }
+                    {
+                        description: description,
+                        funds-required: funds-required,
+                        completed: false,
+                        approved: false
+                    }
+                )
+                (map-set Startups tx-sender (merge startup-info {
+                    milestone-count: (+ (get milestone-count startup-info) u1)
+                }))
+                (ok true)
+            )
+            err-invalid-user
+        )
+    )
+)
+
+;; Complete milestone
+(define-public (complete-milestone (milestone-id uint))
+    (let (
+        (milestone-data (get-milestone tx-sender milestone-id))
+    )
+        (match milestone-data
+            milestone-info
+            (begin
+                (map-set Milestones
+                    { startup: tx-sender, milestone-id: milestone-id }
+                    (merge milestone-info { completed: true })
+                )
+                (ok true)
+            )
+            err-milestone-not-found
+        )
+    )
+)
+
+;; Approve milestone and release funds
+(define-public (approve-milestone (startup principal) (milestone-id uint))
+    (let (
+        (milestone-data (get-milestone startup milestone-id))
+        (investment-data (get-investment startup tx-sender))
+    )
+        (match milestone-data milestone-info
+            (match investment-data investment-info
+                (begin
+                    (map-set Milestones
+                        { startup: startup, milestone-id: milestone-id }
+                        (merge milestone-info { approved: true })
+                    )
+                    (map-set Investments
+                        { startup: startup, investor: tx-sender }
+                        (merge investment-info {
+                            released-funds: (+ (get released-funds investment-info) 
+                                             (get funds-required milestone-info))
+                        })
+                    )
+                    (ok true)
+                )
+                err-invalid-user
+            )
+            err-milestone-not-found
         )
     )
 )
@@ -116,7 +209,8 @@
                 (map-set Investments { startup: startup, investor: tx-sender } {
                     amount: amount,
                     timestamp: block-height,
-                    active: true
+                    active: true,
+                    released-funds: u0
                 })
                 (ok true)
             )
@@ -141,4 +235,8 @@
 
 (define-read-only (get-investment (startup principal) (investor principal))
     (map-get? Investments { startup: startup, investor: investor })
+)
+
+(define-read-only (get-milestone (startup principal) (milestone-id uint))
+    (map-get? Milestones { startup: startup, milestone-id: milestone-id })
 )
