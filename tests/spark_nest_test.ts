@@ -36,6 +36,44 @@ Clarinet.test({
 });
 
 Clarinet.test({
+    name: "Test milestone creation and completion",
+    async fn(chain: Chain, accounts: Map<string, Account>) {
+        const startup = accounts.get('wallet_1')!;
+        const investor = accounts.get('wallet_3')!;
+        
+        // Register startup
+        let setupBlock = chain.mineBlock([
+            Tx.contractCall('spark-nest', 'register-startup', [
+                types.ascii("Test Startup"),
+                types.ascii("A test startup description"),
+                types.uint(1000000)
+            ], startup.address)
+        ]);
+        
+        setupBlock.receipts[0].result.expectOk();
+        
+        // Add milestone
+        let milestoneBlock = chain.mineBlock([
+            Tx.contractCall('spark-nest', 'add-milestone', [
+                types.ascii("First milestone"),
+                types.uint(100000)
+            ], startup.address)
+        ]);
+        
+        milestoneBlock.receipts[0].result.expectOk();
+        
+        // Complete milestone
+        let completeBlock = chain.mineBlock([
+            Tx.contractCall('spark-nest', 'complete-milestone', [
+                types.uint(1)
+            ], startup.address)
+        ]);
+        
+        completeBlock.receipts[0].result.expectOk();
+    }
+});
+
+Clarinet.test({
     name: "Test mentor registration",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const mentor = accounts.get('wallet_2')!;
@@ -52,12 +90,12 @@ Clarinet.test({
 });
 
 Clarinet.test({
-    name: "Test investment process",
+    name: "Test investment and milestone funding process",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const startup = accounts.get('wallet_1')!;
         const investor = accounts.get('wallet_3')!;
         
-        // Register startup
+        // Setup
         let setupBlock = chain.mineBlock([
             Tx.contractCall('spark-nest', 'register-startup', [
                 types.ascii("Test Startup"),
@@ -71,6 +109,16 @@ Clarinet.test({
         
         setupBlock.receipts.map(receipt => receipt.result.expectOk());
         
+        // Add milestone
+        let milestoneBlock = chain.mineBlock([
+            Tx.contractCall('spark-nest', 'add-milestone', [
+                types.ascii("First milestone"),
+                types.uint(100000)
+            ], startup.address)
+        ]);
+        
+        milestoneBlock.receipts[0].result.expectOk();
+        
         // Make investment
         let investBlock = chain.mineBlock([
             Tx.contractCall('spark-nest', 'invest', [
@@ -80,5 +128,18 @@ Clarinet.test({
         ]);
         
         investBlock.receipts[0].result.expectOk();
+        
+        // Complete and approve milestone
+        let completeBlock = chain.mineBlock([
+            Tx.contractCall('spark-nest', 'complete-milestone', [
+                types.uint(1)
+            ], startup.address),
+            Tx.contractCall('spark-nest', 'approve-milestone', [
+                types.principal(startup.address),
+                types.uint(1)
+            ], investor.address)
+        ]);
+        
+        completeBlock.receipts.map(receipt => receipt.result.expectOk());
     }
 });
