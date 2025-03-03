@@ -12,14 +12,27 @@
 (define-constant err-duplicate-investment (err u107))
 (define-constant err-exceeds-funding-goal (err u108))
 
-;; [Previous data structure definitions remain the same...]
+;; Events
+(define-data-var last-event-id uint u0)
 
-;; Enhanced invest function with proper tracking
+(define-map Events
+  { event-id: uint }
+  {
+    event-type: (string-ascii 20),
+    startup: principal,
+    investor: (optional principal),
+    amount: (optional uint),
+    milestone-id: (optional uint)
+  }
+)
+
+;; Enhanced invest function with STX transfer and event tracking
 (define-public (invest (startup principal) (amount uint))
     (let (
         (investor-data (get-investor tx-sender))
         (startup-data (get-startup startup))
         (existing-investment (get-investment startup tx-sender))
+        (event-id (+ (var-get last-event-id) u1))
     )
         (match startup-data startup-info
             (match investor-data investor-info
@@ -29,21 +42,40 @@
                     (<= (+ (get funds-raised startup-info) amount) (get funding-goal startup-info))
                 )
                     (begin
+                        ;; Transfer STX from investor to contract
+                        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+                        
+                        ;; Update investment records
                         (map-set Investments { startup: startup, investor: tx-sender } {
                             amount: amount,
                             timestamp: block-height,
                             active: true,
                             released-funds: u0
                         })
+                        
                         ;; Update startup funds raised
                         (map-set Startups startup (merge startup-info {
                             funds-raised: (+ (get funds-raised startup-info) amount)
                         }))
+                        
                         ;; Update investor stats
                         (map-set Investors tx-sender (merge investor-info {
                             total-invested: (+ (get total-invested investor-info) amount),
                             active-investments: (+ (get active-investments investor-info) u1)
                         }))
+                        
+                        ;; Record event
+                        (map-set Events { event-id: event-id }
+                            {
+                                event-type: "INVESTMENT",
+                                startup: startup,
+                                investor: (some tx-sender),
+                                amount: (some amount),
+                                milestone-id: none
+                            }
+                        )
+                        (var-set last-event-id event-id)
+                        
                         (ok true)
                     )
                     (if (is-some existing-investment)
@@ -54,38 +86,6 @@
                         ))
                 )
                 err-invalid-user
-            )
-            err-invalid-user
-        )
-    )
-)
-
-;; Enhanced add-milestone with validation
-(define-public (add-milestone (description (string-ascii 200)) (funds-required uint))
-    (let (
-        (startup-data (get-startup tx-sender))
-    )
-        (match startup-data startup-info
-            (if (<= (+ funds-required (get funds-raised startup-info)) (get funding-goal startup-info))
-                (begin
-                    (map-set Milestones 
-                        { 
-                            startup: tx-sender,
-                            milestone-id: (+ (get milestone-count startup-info) u1)
-                        }
-                        {
-                            description: description,
-                            funds-required: funds-required,
-                            completed: false,
-                            approved: false
-                        }
-                    )
-                    (map-set Startups tx-sender (merge startup-info {
-                        milestone-count: (+ (get milestone-count startup-info) u1)
-                    }))
-                    (ok true)
-                )
-                err-exceeds-funding-goal
             )
             err-invalid-user
         )
